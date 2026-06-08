@@ -11,21 +11,25 @@ if errorlevel 1 (
     exit /b 1
 )
 
-where python >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Python not found. Install Python 3.8+ and add to PATH.
-    pause
-    exit /b 1
-)
+if exist "dist\视频首尾帧提取.exe" (
+    start "" "dist\视频首尾帧提取.exe"
+) else (
+    where python >nul 2>&1
+    if errorlevel 1 (
+        echo [ERROR] Python not found. Install Python 3.8+ and add to PATH.
+        pause
+        exit /b 1
+    )
 
-python -c "import cv2" >nul 2>&1
-if errorlevel 1 (
-    echo Installing dependencies...
-    python -m pip install -r requirements.txt -q
-)
+    python -c "import cv2" >nul 2>&1
+    if errorlevel 1 (
+        echo Installing dependencies...
+        python -m pip install -r requirements.txt -q
+    )
 
-start "" pythonw src\extract_frames.py
-if errorlevel 1 python src\extract_frames.py
+    start "" pythonw src\extract_frames.py
+    if errorlevel 1 python src\extract_frames.py
+)
 
 popd
 endlocal
