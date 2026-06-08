@@ -1,43 +1,44 @@
-视频首尾帧提取
+# 视频首尾帧提取
 
-从本地视频中提取**首帧**或**尾帧**，保存为 PNG 图片。支持中文路径与中文文件名。
+一个 Windows 桌面工具，用于从本地视频中批量提取首帧或尾帧，并保存为 PNG 图片。
 
-功能
-- 图形界面选择视频，支持批量处理
-- 输出与原视频同目录：`原文件名（首）.png` / `原文件名（尾）.png`
-- Windows 下中文路径读写兼容
+## 功能
 
-目录结构
-.
-├── README.md
-├── requirements.txt      # Python 依赖
-├── src/
-│   └── extract_frames.py # 主程序
-└── scripts/
-    └── 启动.bat          # Windows 一键启动
+- 批量选择多个视频文件
+- 提取首帧或尾帧
+- 结果保存到原视频同目录
+- 自动生成文件名：`原文件名（首）.png` / `原文件名（尾）.png`
+- 支持中文路径和中文文件名
 
+## 发布文件
 
-环境要求
-- Windows 10 / 11（推荐）
-- Python 3.8+
-- 安装时勾选 **Add Python to PATH**
+- `dist/视频首尾帧提取.exe`：独立可执行版本，双击即可运行
+- `scripts/启动.bat`：兼容启动脚本，优先调用 exe
+- `src/extract_frames.py`：源码入口
 
-使用
+## 使用方式
 
-# 方式一：批处理（推荐）
+### 方式一：直接运行 exe
 
-双击 `scripts/启动.bat`，首次会自动安装 `opencv-python`。
+双击 `dist/视频首尾帧提取.exe`。
 
-# 方式二：命令行
+### 方式二：通过启动脚本
+
+双击 `scripts/启动.bat`。
+
+### 方式三：运行源码
 
 ```bash
 pip install -r requirements.txt
 python src/extract_frames.py
 ```
-# 依赖
 
-- [opencv-python](https://pypi.org/project/opencv-python/)
+## 环境要求
 
-## License
+- Windows 10 / 11
+- `dist/视频首尾帧提取.exe` 无需额外安装 Python
+- 运行源码时需要 Python 3.8+
 
-MIT（可按需修改）
+## 依赖
+
+- `opencv-python`
