@@ -1,30 +1,13 @@
 # -*- coding: utf-8 -*-
-"""视频首尾帧提取工具"""
 
-import ctypes
 import os
-import sys
+import shutil
+import subprocess
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-
-def _repo_root() -> str:
-    """项目根目录（requirements.txt 所在位置）"""
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-try:
-    import cv2
-except ImportError:
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showerror(
-        "缺少依赖",
-        "未安装 opencv-python。\n\n请在项目根目录执行：\n"
-        f'pip install -r "{_repo_root()}\\requirements.txt"',
-    )
-    sys.exit(1)
 
 VIDEO_EXTENSIONS = {
     ".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm",
@@ -32,99 +15,118 @@ VIDEO_EXTENSIONS = {
 }
 
 
+def app_root() -> Path:
+    if getattr(__import__("sys"), "frozen", False):
+        return Path(__import__("sys").executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
 def is_video_file(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in VIDEO_EXTENSIONS
 
 
-def get_short_path(path: str) -> str:
-    """Windows short path (8.3), helps OpenCV when path has non-ASCII chars."""
-    if os.name != "nt":
-        return ""
-    buf = ctypes.create_unicode_buffer(32768)
-    if ctypes.windll.kernel32.GetShortPathNameW(path, buf, len(buf)):
-        return buf.value
-    return ""
-
-
-def open_video(path: str) -> cv2.VideoCapture:
-    cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG)
-    if cap.isOpened():
-        return cap
-    short = get_short_path(os.path.abspath(path))
-    if short:
-        cap = cv2.VideoCapture(short, cv2.CAP_FFMPEG)
-    return cap
-
-
-def imwrite_unicode(path: str, image) -> bool:
-    """cv2.imwrite fails on Unicode paths on Windows; use imencode + tofile."""
-    ext = os.path.splitext(path)[1] or ".png"
-    ok, buf = cv2.imencode(ext, image)
-    if not ok:
-        return False
-    try:
-        buf.tofile(path)
-    except OSError:
-        return False
-    return os.path.isfile(path)
-
-
 def output_path(video_path: str, frame_type: str) -> str:
-    """frame_type: '首' 或 '尾'"""
     folder = os.path.dirname(os.path.abspath(video_path))
     stem = os.path.splitext(os.path.basename(video_path))[0]
     return os.path.join(folder, f"{stem}（{frame_type}）.png")
 
 
-def read_first_frame(cap: cv2.VideoCapture):
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    ok, frame = cap.read()
-    return ok, frame
+def find_ffmpeg_tools():
+    root = app_root()
+    local_ffmpeg = root / "ffmpeg.exe"
+    local_ffprobe = root / "ffprobe.exe"
+    if local_ffmpeg.is_file() and local_ffprobe.is_file():
+        return str(local_ffmpeg), str(local_ffprobe)
+
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if ffmpeg and ffprobe:
+        return ffmpeg, ffprobe
+
+    return None, None
 
 
-def read_last_frame(cap: cv2.VideoCapture):
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    if total > 1:
-        for pos in (total - 1, total - 2, max(0, total - 10)):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
-            ok, frame = cap.read()
-            if ok and frame is not None:
-                return True, frame
+def run_command(args):
+    return subprocess.run(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
 
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    last = None
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        last = frame
-    if last is not None:
-        return True, last
-    return False, None
+
+def probe_duration(ffprobe_path: str, video_path: str):
+    result = run_command([
+        ffprobe_path,
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        video_path,
+    ])
+    if result.returncode != 0:
+        return None
+    try:
+        duration = float(result.stdout.strip())
+    except ValueError:
+        return None
+    return duration if duration > 0 else None
+
+
+def extract_first_frame(ffmpeg_path: str, video_path: str, out_path: str):
+    return run_command([
+        ffmpeg_path,
+        "-y",
+        "-i",
+        video_path,
+        "-frames:v",
+        "1",
+        out_path,
+    ])
+
+
+def extract_last_frame(ffmpeg_path: str, ffprobe_path: str, video_path: str, out_path: str):
+    duration = probe_duration(ffprobe_path, video_path)
+    if duration is None:
+        return None
+    seek_time = max(duration - 0.04, 0)
+    return run_command([
+        ffmpeg_path,
+        "-y",
+        "-ss",
+        f"{seek_time:.3f}",
+        "-i",
+        video_path,
+        "-frames:v",
+        "1",
+        out_path,
+    ])
 
 
 def extract_frame(video_path: str, frame_type: str):
-    cap = open_video(video_path)
-    if not cap.isOpened():
-        return False, "无法打开视频文件（路径含中文时请确认视频可正常播放）"
+    ffmpeg_path, ffprobe_path = find_ffmpeg_tools()
+    if not ffmpeg_path or not ffprobe_path:
+        return False, "缺少 FFmpeg 依赖，请提供 ffmpeg.exe 和 ffprobe.exe，或安装到系统 PATH"
 
-    try:
-        if frame_type == "首":
-            ok, frame = read_first_frame(cap)
-        else:
-            ok, frame = read_last_frame(cap)
+    out = output_path(video_path, frame_type)
+    if frame_type == "首":
+        result = extract_first_frame(ffmpeg_path, video_path, out)
+    else:
+        result = extract_last_frame(ffmpeg_path, ffprobe_path, video_path, out)
+        if result is None:
+            return False, "无法获取视频时长"
 
-        if not ok or frame is None:
-            return False, "未能读取到有效帧"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        return False, detail or "提取失败"
 
-        out = output_path(video_path, frame_type)
-        if not imwrite_unicode(out, frame):
-            return False, f"保存图片失败: {out}"
+    if not os.path.isfile(out):
+        return False, f"保存图片失败: {out}"
 
-        return True, out
-    finally:
-        if cap is not None:
-            cap.release()
+    return True, out
 
 
 class App(tk.Tk):
@@ -156,7 +158,7 @@ class App(tk.Tk):
 
         btn_row = ttk.Frame(frm_top)
         btn_row.pack(fill=tk.X)
-        ttk.Button(btn_row, text="添加视频文件…", command=self._pick_files).pack(
+        ttk.Button(btn_row, text="添加视频文件...", command=self._pick_files).pack(
             side=tk.LEFT, padx=(0, 8)
         )
         ttk.Button(btn_row, text="清空列表", command=self._clear_list).pack(side=tk.LEFT)
@@ -182,7 +184,7 @@ class App(tk.Tk):
 
         ttk.Label(
             self,
-            text="输出：与原视频同目录，文件名为「原文件名（首/尾）.png」",
+            text="输出：与原视频同目录，文件名为“原文件名（首/尾）.png”",
             foreground="#555",
         ).pack(anchor=tk.W, padx=12)
 
@@ -261,23 +263,20 @@ class App(tk.Tk):
 
         for path in paths:
             name = os.path.basename(path)
-            self.after(0, lambda n=name, t=frame_type: self._log(f"处理中: {n}（{t}帧）…"))
+            self.after(0, lambda n=name, t=frame_type: self._log(f"处理中: {n}（{t}帧）..."))
 
             ok, result = extract_frame(path, frame_type)
             if ok:
                 ok_count += 1
-                self.after(0, lambda r=result: self._log(f"  ✓ 已保存: {r}"))
+                self.after(0, lambda r=result: self._log(f"  成功: {r}"))
             else:
                 fail_count += 1
-                self.after(0, lambda r=result, n=name: self._log(f"  ✗ {n}: {r}"))
+                self.after(0, lambda r=result, n=name: self._log(f"  失败: {n}: {r}"))
 
         summary = f"完成：成功 {ok_count} 个，失败 {fail_count} 个"
         self.after(0, lambda: self._log(summary))
         self.after(0, lambda: self._set_busy(False))
-        self.after(
-            0,
-            lambda: messagebox.showinfo("提取完成", summary) if ok_count or fail_count else None,
-        )
+        self.after(0, lambda: messagebox.showinfo("提取完成", summary))
 
 
 def main():
